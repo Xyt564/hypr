@@ -1,69 +1,71 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Hyprland setup for Debian 13 (Trixie)
-# Desktop: GNOME
+# Hyprland setup for minimal Arch Linux
 # Graphics: AMD / Intel
 # Includes: animations, blur, Waybar, Wofi, Foot, Mako
+# Login: greetd + tuigreet
+# No GNOME or other full desktop environment
 
 if [[ $EUID -eq 0 ]]; then
     echo "Please run this script as your normal user, not root."
     exit 1
 fi
 
-if ! grep -qE 'VERSION_ID="13"|VERSION_CODENAME=trixie' /etc/os-release; then
-    echo "Warning: This script was designed for Debian 13 (Trixie)."
-    read -r -p "Continue anyway? [y/N] " answer
-    [[ "$answer" =~ ^[Yy]$ ]] || exit 1
-fi
-
-if ! command -v sudo >/dev/null 2>&1; then
-    echo "Install sudo first, or run the package installation commands as root."
+if [[ ! -f /etc/arch-release ]]; then
+    echo "This script is intended for Arch Linux."
     exit 1
 fi
 
-echo "==> Updating package lists..."
-sudo apt-get update
+if ! command -v sudo >/dev/null 2>&1; then
+    echo "Install sudo and configure permissions for your user first."
+    exit 1
+fi
+
+echo "==> Updating Arch Linux..."
+sudo pacman -Syu
 
 echo "==> Installing Hyprland and desktop utilities..."
 
 packages=(
     hyprland
+    hyprpolkitagent
+    greetd
+    greetd-tuigreet
     waybar
     wofi
     foot
-    mako-notifier
-    xwayland
+    mako
+    thunar
+    gvfs
+    tumbler
+    pavucontrol
+    xorg-xwayland
     xdg-desktop-portal
     xdg-desktop-portal-hyprland
+    xdg-desktop-portal-gtk
     pipewire
-    wireplumber
+    pipewire-audio
     pipewire-pulse
-    fonts-noto-color-emoji
-    fonts-dejavu-core
-    brightnessctl
+    wireplumber
+    networkmanager
+    network-manager-applet
+    polkit
     grim
     slurp
     wl-clipboard
-    network-manager
+    brightnessctl
+    qt5-wayland
+    qt6-wayland
+    noto-fonts
+    noto-fonts-emoji
+    ttf-dejavu
+    ttf-liberation
+    papirus-icon-theme
+    adwaita-icon-theme
 )
 
-# Prefer the Debian 13 backports build if one is available.
-if ! apt-cache madison hyprland | grep -q 'trixie-backports'; then
-    echo "==> Adding the Debian Trixie backports repository..."
-    echo "deb http://deb.debian.org/debian trixie-backports main" |
-        sudo tee /etc/apt/sources.list.d/trixie-backports.list >/dev/null
-    sudo apt-get update
-fi
-
-if apt-cache madison hyprland | grep -q 'trixie-backports'; then
-    if ! sudo apt-get install -y -t trixie-backports "${packages[@]}"; then
-        echo "Backports installation failed; trying standard Debian packages..."
-        sudo apt-get install -y "${packages[@]}"
-    fi
-else
-    sudo apt-get install -y "${packages[@]}"
-fi
+sudo pacman -S --needed "${packages[@]}"
 
 echo "==> Creating configuration directories..."
 
@@ -73,16 +75,31 @@ mkdir -p \
     "$HOME/.config/wofi" \
     "$HOME/.config/mako"
 
-# Preserve an existing Hyprland configuration.
-if [[ -f "$HOME/.config/hypr/hyprland.conf" ]]; then
-    cp "$HOME/.config/hypr/hyprland.conf" \
-       "$HOME/.config/hypr/hyprland.conf.backup.$(date +%Y%m%d%H%M%S)"
+# Back up existing configuration files.
+backup_dir="$HOME/.config/hypr-setup-backup-$(date +%Y%m%d%H%M%S)"
+backup_needed=false
+
+for file in \
+    "$HOME/.config/hypr/hyprland.conf" \
+    "$HOME/.config/waybar/config" \
+    "$HOME/.config/waybar/style.css" \
+    "$HOME/.config/wofi/style.css" \
+    "$HOME/.config/mako/config"; do
+    if [[ -f "$file" ]]; then
+        mkdir -p "$backup_dir"
+        backup_needed=true
+        cp -a "$file" "$backup_dir/"
+    fi
+done
+
+if [[ "$backup_needed" == true ]]; then
+    echo "Previous configurations backed up to $backup_dir"
 fi
 
 echo "==> Writing Hyprland configuration..."
 
 cat > "$HOME/.config/hypr/hyprland.conf" <<'HYPR'
-# Monitor: choose preferred resolution and scale automatically.
+# Monitor
 monitor = , preferred, auto, 1
 
 # Environment
@@ -90,12 +107,14 @@ env = XCURSOR_SIZE,24
 env = XDG_CURRENT_DESKTOP,Hyprland
 env = XDG_SESSION_TYPE,wayland
 env = XDG_SESSION_DESKTOP,Hyprland
+env = QT_QPA_PLATFORM,wayland
 
-# Keyboard
+# Keyboard and touchpad
 input {
     kb_layout = us
     follow_mouse = 1
     sensitivity = 0
+
     touchpad {
         natural_scroll = true
         tap-to-click = true
@@ -115,7 +134,7 @@ general {
     resize_on_border = true
 }
 
-# Rounded corners and blur
+# Rounded corners, shadows, blur
 decoration {
     rounding = 12
 
@@ -134,7 +153,6 @@ decoration {
         size = 8
         passes = 3
         vibrancy = 0.17
-        new_optimizations = true
     }
 }
 
@@ -152,29 +170,29 @@ animations {
     animation = workspaces, 1, 5, easeOut, slide
 }
 
-# Dwindle tiling
+# Tiling
 dwindle {
     pseudotile = true
     preserve_split = true
 }
 
-# Master key
-$mainMod = SUPER
-
 # Applications
+$mainMod = SUPER
 $terminal = foot
 $fileManager = thunar
 $menu = wofi --show drun
 
-# Start desktop services
+# Startup applications and services
 exec-once = waybar
 exec-once = mako
-exec-once = dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP
+exec-once = nm-applet --indicator
+exec-once = systemctl --user start hyprpolkitagent
+exec-once = dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE
 
 # Keyboard shortcuts
 bind = $mainMod, Q, exec, $terminal
 bind = $mainMod, R, exec, $menu
-bind = $mainMod, E, exec, thunar
+bind = $mainMod, E, exec, $fileManager
 bind = $mainMod, C, killactive
 bind = $mainMod, M, exit
 bind = $mainMod, V, togglefloating
@@ -182,7 +200,7 @@ bind = $mainMod, F, fullscreen
 bind = $mainMod, P, pseudo
 bind = $mainMod, J, togglesplit
 
-# Switch workspaces with Super + number
+# Workspaces
 bind = $mainMod, 1, workspace, 1
 bind = $mainMod, 2, workspace, 2
 bind = $mainMod, 3, workspace, 3
@@ -200,13 +218,13 @@ bind = $mainMod SHIFT, 3, movetoworkspace, 3
 bind = $mainMod SHIFT, 4, movetoworkspace, 4
 bind = $mainMod SHIFT, 5, movetoworkspace, 5
 
-# Move focus with Super + arrow keys
+# Focus windows
 bind = $mainMod, LEFT, movefocus, l
 bind = $mainMod, RIGHT, movefocus, r
 bind = $mainMod, UP, movefocus, u
 bind = $mainMod, DOWN, movefocus, d
 
-# Move windows with Super + Shift + arrows
+# Move windows
 bind = $mainMod SHIFT, LEFT, movewindow, l
 bind = $mainMod SHIFT, RIGHT, movewindow, r
 bind = $mainMod SHIFT, UP, movewindow, u
@@ -214,6 +232,18 @@ bind = $mainMod SHIFT, DOWN, movewindow, d
 
 # Screenshots
 bind = , Print, exec, grim -g "$(slurp)" - | wl-copy
+
+# Volume controls
+bind = , XF86AudioRaiseVolume, exec, wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+
+bind = , XF86AudioLowerVolume, exec, wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-
+bind = , XF86AudioMute, exec, wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
+
+# Brightness controls
+bind = , XF86MonBrightnessUp, exec, brightnessctl set +10%
+bind = , XF86MonBrightnessDown, exec, brightnessctl set 10%-
+
+# Session controls
+bind = $mainMod SHIFT, Q, exit
 HYPR
 
 echo "==> Writing Waybar configuration..."
@@ -225,8 +255,13 @@ cat > "$HOME/.config/waybar/config" <<'WAYBAR'
     "height": 34,
     "spacing": 8,
 
-    "modules-left": ["hyprland/workspaces", "hyprland/window"],
+    "modules-left": [
+        "hyprland/workspaces",
+        "hyprland/window"
+    ],
+
     "modules-center": ["clock"],
+
     "modules-right": [
         "network",
         "pulseaudio",
@@ -378,7 +413,7 @@ window {
 }
 CSS
 
-echo "==> Writing Mako notification styling..."
+echo "==> Writing Mako configuration..."
 
 cat > "$HOME/.config/mako/config" <<'MAKO'
 font=DejaVu Sans 10
@@ -395,21 +430,48 @@ height=120
 margin=12
 MAKO
 
-echo "==> Installing optional utilities..."
+echo "==> Configuring greetd login..."
 
-# Thunar and pavucontrol are used by the configuration above.
-sudo apt-get install -y thunar pavucontrol
+sudo install -d -m 755 /etc/greetd
+
+# Back up the previous greetd configuration if present.
+if [[ -f /etc/greetd/config.toml ]]; then
+    sudo cp -a /etc/greetd/config.toml \
+        "/etc/greetd/config.toml.backup.$(date +%Y%m%d%H%M%S)"
+fi
+
+sudo tee /etc/greetd/config.toml >/dev/null <<'GREETD'
+[terminal]
+vt = 1
+
+[default_session]
+command = "tuigreet --time --remember --cmd start-hyprland"
+user = "greeter"
+GREETD
+
+echo "==> Enabling essential services..."
+
+# NetworkManager
+sudo systemctl enable NetworkManager.service
+
+# Start audio services automatically for the user session.
+systemctl --user enable pipewire.service pipewire-pulse.service wireplumber.service || true
+
+# Start the login manager at boot.
+sudo systemctl enable greetd.service
 
 echo
 echo "=========================================="
-echo " Hyprland installation and setup finished"
+echo " Hyprland installation finished"
 echo "=========================================="
 echo
-echo "Log out of GNOME, then select Hyprland"
-echo "from the login screen's session menu."
+echo "A reboot is recommended."
+echo "The greetd login screen will launch at boot."
+echo
+echo "Login with your normal Arch Linux username."
 echo
 echo "Shortcuts:"
-echo "  Super + Q       Open terminal"
+echo "  Super + Q       Terminal"
 echo "  Super + R       Application launcher"
 echo "  Super + E       File manager"
 echo "  Super + C       Close window"
@@ -417,5 +479,6 @@ echo "  Super + V       Toggle floating"
 echo "  Super + F       Fullscreen"
 echo "  Super + M       Exit Hyprland"
 echo "  Print           Screenshot selection"
+echo "  Super + Shift + Q  Exit Hyprland"
 echo
-echo "Your GNOME desktop has not been removed."
+echo "Reboot with: sudo reboot"
